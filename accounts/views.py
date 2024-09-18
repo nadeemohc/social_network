@@ -19,7 +19,7 @@ class SignUpView(APIView):
         return Response({"message": "Use POST to sign up a new user."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def post(self, request):
-        email = request.data.get('email')
+        email = request.data.get('email').strip().lower()
         password = request.data.get('password')
 
         if not email or not password:
@@ -36,6 +36,7 @@ class SignUpView(APIView):
         )
 
         return Response({"message": "User created successfully"}, status=status.HTTP_201_CREATED)
+
 
 
 import logging

@@ -1,5 +1,6 @@
 from django.core.cache import cache
 from rest_framework.response import Response
+from django.http import JsonResponse
 from rest_framework.views import APIView
 
 class RateLimitMiddleware:
@@ -22,7 +23,7 @@ class RateLimitMiddleware:
             count = cache.incr(cache_key)
 
         if count > 5:
-            return Response({"error": "Rate limit exceeded"}, status=429)
+            return JsonResponse({"error": "Rate limit exceeded"}, status=429)
 
         response = self.get_response(request)
         return response

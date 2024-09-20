@@ -2,13 +2,22 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password
-from .models import User
+from .models import User, FriendRequest
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import MyTokenObtainPairSerializer
+from rest_framework.permissions import IsAuthenticated
 from django.core.cache import cache
 from .permissions import IsRead, IsWrite, IsAdmin
 from accounts.middleware import RateLimitMiddleware
 import logging
+from rest_framework import generics
+from django.db.models import Q
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
+from .serializers import UserSerializer
+from rest_framework.pagination import PageNumberPagination
+from accounts.middleware import can_send_friend_request
+from django.db import transaction
+from django.utils.timezone import now, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -65,3 +74,74 @@ class MyTokenObtainPairView(TokenObtainPairView):
             return Response({"error": "Rate limit exceeded"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         return super().post(request, *args, **kwargs)
+
+
+class UserSearchPagination(PageNumberPagination):
+    page_size = 10
+
+class UserSearchView(generics.ListAPIView):
+    serializer_class = UserSerializer
+    pagination_class = UserSearchPagination
+
+    def get_queryset(self):
+        search_query = self.request.query_params.get('q', '')
+        if not search_query:
+            return User.objects.none()
+
+        # Search by exact email
+        email_matches = User.objects.filter(email__iexact=search_query)
+
+        # Full-text search for username
+        search_vector = SearchVector('username')
+        search_query_obj = SearchQuery(search_query, config='english')
+        name_matches = User.objects.annotate(
+            rank=SearchRank(search_vector, search_query_obj)
+        ).filter(Q(username__icontains=search_query) | Q(rank__gte=0.1)).order_by('-rank')
+
+        # Combine email matches and name matches
+        # Convert QuerySets to lists to perform union and deduplication
+        email_matches_list = list(email_matches.values_list('id', flat=True))
+        name_matches_list = list(name_matches.values_list('id', flat=True))
+
+        combined_ids = set(email_matches_list) | set(name_matches_list)
+        queryset = User.objects.filter(id__in=combined_ids)
+
+        return queryset
+
+class SendFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        sender = request.user
+        print(f'sender = {sender}')
+        # Ensure the sender is authenticated and has a valid ID
+        if not sender or not sender.id:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        receiver_id = request.data.get('receiver_id')
+
+        if not can_send_friend_request(sender):
+            return Response({"error": "Request limit exceeded"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        try:
+            receiver = User.objects.get(id=receiver_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if a friend request was already sent
+        friend_request = FriendRequest.objects.filter(sender=sender, receiver=receiver).first()
+        print(f'Request info: {friend_request}')
+
+        if friend_request and friend_request.status == FriendRequest.REJECTED:
+            cooldown_end = friend_request.updated_at + timedelta(hours=24)
+            if now() < cooldown_end:
+                return Response({"error": "Cannot send request yet, cooldown active"}, status=status.HTTP_403_FORBIDDEN)
+
+        if friend_request and friend_request.status == FriendRequest.PENDING:
+            return Response({"error": "Friend request already sent"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create a new friend request
+        FriendRequest.objects.create(sender=sender, receiver=receiver)
+        return Response({"message": "Friend request sent"}, status=status.HTTP_201_CREATED)
+
+

@@ -145,3 +145,26 @@ class SendFriendRequestView(APIView):
         return Response({"message": "Friend request sent"}, status=status.HTTP_201_CREATED)
 
 
+class AcceptFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        # Ensure the user is authenticated
+        if not request.user or request.user.is_anonymous:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            # Fetch the friend request sent to the current authenticated user
+            friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+        except FriendRequest.DoesNotExist:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Atomic transaction to ensure data integrity
+        with transaction.atomic():
+            friend_request.status = FriendRequest.ACCEPTED
+            friend_request.save()
+
+        return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
+
+
+

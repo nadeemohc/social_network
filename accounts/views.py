@@ -167,4 +167,25 @@ class AcceptFriendRequestView(APIView):
         return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
 
 
+class RejectFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if not request.user or request.user.is_anonymous:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+        except FriendRequest.DoesNotExist:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ensure cooldown period after rejecting
+        if friend_request.is_rejected_cooldown_active():
+            return Response({"error": "You can't send request now as you're in the cooldown period"}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            friend_request.delete()
+
+        return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
+
 

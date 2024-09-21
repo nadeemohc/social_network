@@ -119,12 +119,14 @@ class SendFriendRequestView(APIView):
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
 
         receiver_id = request.data.get('receiver_id')
+        print(f'reciever id = {receiver_id}')
 
         if not can_send_friend_request(sender):
             return Response({"error": "Request limit exceeded"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         try:
             receiver = User.objects.get(id=receiver_id)
+            print(f'reciever={receiver}')
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -152,19 +154,23 @@ class AcceptFriendRequestView(APIView):
         # Ensure the user is authenticated
         if not request.user or request.user.is_anonymous:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+        if friend_request.status != 'rejected':
+            try:
+                # Fetch the friend request sent to the current authenticated user
+                friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+            except FriendRequest.DoesNotExist:
+                return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            # Fetch the friend request sent to the current authenticated user
-            friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
-        except FriendRequest.DoesNotExist:
-            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Atomic transaction to ensure data integrity
+            with transaction.atomic():
+                friend_request.status = FriendRequest.ACCEPTED
+                friend_request.save()
 
-        # Atomic transaction to ensure data integrity
-        with transaction.atomic():
-            friend_request.status = FriendRequest.ACCEPTED
-            friend_request.save()
-
-        return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
+            return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
+        
+        return Response({"message": "Friend request already rejected"}, status=status.HTTP_200_OK)
+        
 
 
 class RejectFriendRequestView(APIView):
@@ -184,8 +190,8 @@ class RejectFriendRequestView(APIView):
             return Response({"error": "You can't send request now as you're in the cooldown period"}, status=status.HTTP_403_FORBIDDEN)
 
         with transaction.atomic():
-            friend_request.delete()
+            friend_request.status = FriendRequest.REJECTED
+            friend_request.save()
 
         return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
-
 

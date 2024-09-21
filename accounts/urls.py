@@ -13,4 +13,5 @@ urlpatterns = [
     path('block/', BlockUserView.as_view(), name='block_user'),
     path('unblock/', UnblockUserView.as_view(), name='unblock_user'),
     path('profile/<int:user_id>/', ProfileView.as_view(), name='view_profile'),
+    path('friends/', FriendListView.as_view(), name='friends-list')
 ]

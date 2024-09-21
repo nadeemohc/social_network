@@ -18,6 +18,7 @@ from rest_framework.pagination import PageNumberPagination
 from accounts.middleware import can_send_friend_request
 from django.db import transaction
 from django.utils.timezone import now, timedelta
+from rest_framework.generics import ListAPIView
 
 logger = logging.getLogger(__name__)
 
@@ -264,3 +265,45 @@ class ProfileView(APIView):
         
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class FriendListPagination(PageNumberPagination):
+    page_size = 10
+
+class FriendListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = FriendListPagination
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # Check if result is cached
+        cache_key = f"friends_list_{user.id}"
+        friends_list = cache.get(cache_key)
+
+        if not friends_list:
+            # Query for accepted friend requests
+            accepted_friend_requests = FriendRequest.objects.filter(
+                Q(sender=user) | Q(receiver=user),
+                status=FriendRequest.ACCEPTED
+            ).select_related('sender', 'receiver')
+
+            # Build the list of friends
+            friends = []
+            for request in accepted_friend_requests:
+                if request.sender == user:
+                    friends.append(request.receiver)
+                else:
+                    friends.append(request.sender)
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, friends, timeout=60 * 10)
+
+        return friends_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response

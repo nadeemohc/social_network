@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password
 from .models import User, FriendRequest
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer
+from .serializers import MyTokenObtainPairSerializer, PendingFriendRequestSerializer
 from rest_framework.permissions import IsAuthenticated
 from django.core.cache import cache
 from .permissions import IsRead, IsWrite, IsAdmin
@@ -307,3 +307,17 @@ class FriendListView(ListAPIView):
         """
         response = super().list(request, *args, **kwargs)
         return response
+
+
+from .pagination import PendingFriendRequestPagination
+
+class PendingFriendRequestsView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = PendingFriendRequestPagination
+    serializer_class = PendingFriendRequestSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        print(user)
+        return FriendRequest.objects.filter(receiver=user, status=FriendRequest.PENDING).order_by('-created_at')
+

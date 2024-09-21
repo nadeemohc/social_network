@@ -69,7 +69,6 @@ REST_FRAMEWORK = {
     ),
 }
 
-
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",

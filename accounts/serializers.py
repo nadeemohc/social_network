@@ -1,6 +1,6 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
-from .models import User
+from .models import *
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -21,3 +21,11 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         data['email'] = self.user.email
         data['role'] = self.user.role
         return data
+
+
+class PendingFriendRequestSerializer(serializers.ModelSerializer):
+    sender = UserSerializer(read_only=True)  # Include sender information
+
+    class Meta:
+        model = FriendRequest
+        fields = ['id', 'created_at', 'sender']  # Add sender here

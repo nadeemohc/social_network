@@ -11,9 +11,15 @@ class User(AbstractUser):
         ('write', 'Write'),
         ('admin', 'Admin')
     ], default='read')
-
+    blocked_users = models.ManyToManyField('self', symmetrical=False, related_name='blocked_by')
+    
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
+
+    def is_blocked(self, user):
+        # Check if the given user is blocked by the current user
+        return self.blocked_users.filter(id=user.id).exists()
+
 
 
 class FriendRequest(models.Model):
@@ -40,6 +46,14 @@ class FriendRequest(models.Model):
         indexes = [
             models.Index(fields=['sender', 'receiver', 'status']),
         ]
+
+    def accept(self):
+        self.status = self.ACCEPTED
+        self.save()
+
+    def reject(self):
+        self.status = self.REJECTED
+        self.save()
 
     def is_rejected_cooldown_active(self):
         cooldown_period = timedelta(hours=24)

@@ -130,6 +130,10 @@ class SendFriendRequestView(APIView):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if sender.is_blocked(receiver) or receiver.is_blocked(sender):
+            return Response({"error": "You cannot send a friend request to this user"}, status=status.HTTP_403_FORBIDDEN)
+
+
         # Check if a friend request was already sent
         friend_request = FriendRequest.objects.filter(sender=sender, receiver=receiver).first()
         print(f'Request info: {friend_request}')
@@ -195,3 +199,68 @@ class RejectFriendRequestView(APIView):
 
         return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
 
+class BlockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        blocker = request.user
+        blocked_id = request.data.get('blocked_id')
+
+        try:
+            blocked_user = User.objects.get(id=blocked_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if blocker.is_blocked(blocked_user):
+            return Response({"error": "User is already blocked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Block the user
+        blocker.blocked_users.add(blocked_user)
+
+        # Optionally, handle existing friend requests
+        FriendRequest.objects.filter(sender=blocker, receiver=blocked_user).update(status=FriendRequest.BLOCKED)
+        FriendRequest.objects.filter(sender=blocked_user, receiver=blocker).update(status=FriendRequest.BLOCKED)
+
+        return Response({"message": "User blocked"}, status=status.HTTP_200_OK)
+
+
+
+class UnblockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        blocker = request.user
+        blocked_id = request.data.get('blocked_id')
+
+        try:
+            blocked_user = User.objects.get(id=blocked_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not blocker.is_blocked(blocked_user):
+            return Response({"error": "User is not blocked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Unblock the user
+        blocker.blocked_users.remove(blocked_user)
+        return Response({"message": "User unblocked"}, status=status.HTTP_200_OK)
+
+
+class ProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        try:
+            # Fetch the profile of the requested user
+            user = User.objects.get(id=user_id)
+            
+            # Check if the requesting user has blocked the target user or vice versa
+            if user in request.user.blocked_users.all() or request.user in user.blocked_users.all():
+                return Response({"error": "You cannot view this profile as one of you has blocked the other."}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Serialize and return the user profile data
+            serializer = UserSerializer(user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)

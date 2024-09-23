@@ -10,4 +10,11 @@ urlpatterns = [
     path('send/', SendFriendRequestView.as_view(), name='send_friend_request'),
     path('accept/<int:request_id>/', AcceptFriendRequestView.as_view(), name='accept_friend_request'),
     path('reject/<int:request_id>/', RejectFriendRequestView.as_view(), name='reject_friend_request'),
+    path('block/', BlockUserView.as_view(), name='block_user'),
+    path('unblock/', UnblockUserView.as_view(), name='unblock_user'),
+    path('profile/<int:user_id>/', ProfileView.as_view(), name='view_profile'),
+    path('friends/', FriendListView.as_view(), name='friends-list'),
+    path('sent-pending-requests/', SentPendingFriendRequestsView.as_view(), name='sent-pending-requests'),
+    # path('pending-friend-requests/', PendingFriendRequestsView.as_view(), name='pending-friend-requests'),
+    path('received-pending-requests/', ReceivedPendingFriendRequestsView.as_view(), name='received-pending-requests'),
 ]

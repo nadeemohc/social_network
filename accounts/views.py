@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password
 from .models import User, FriendRequest
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer
+from .serializers import MyTokenObtainPairSerializer, PendingFriendRequestSerializer
 from rest_framework.permissions import IsAuthenticated
 from django.core.cache import cache
 from .permissions import IsRead, IsWrite, IsAdmin
@@ -18,6 +18,7 @@ from rest_framework.pagination import PageNumberPagination
 from accounts.middleware import can_send_friend_request
 from django.db import transaction
 from django.utils.timezone import now, timedelta
+from rest_framework.generics import ListAPIView
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +120,20 @@ class SendFriendRequestView(APIView):
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
 
         receiver_id = request.data.get('receiver_id')
+        print(f'reciever id = {receiver_id}')
 
         if not can_send_friend_request(sender):
             return Response({"error": "Request limit exceeded"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         try:
             receiver = User.objects.get(id=receiver_id)
+            print(f'reciever={receiver}')
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if sender.is_blocked(receiver) or receiver.is_blocked(sender):
+            return Response({"error": "You cannot send a friend request to this user"}, status=status.HTTP_403_FORBIDDEN)
+
 
         # Check if a friend request was already sent
         friend_request = FriendRequest.objects.filter(sender=sender, receiver=receiver).first()
@@ -152,19 +159,23 @@ class AcceptFriendRequestView(APIView):
         # Ensure the user is authenticated
         if not request.user or request.user.is_anonymous:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+        if friend_request.status != 'rejected':
+            try:
+                # Fetch the friend request sent to the current authenticated user
+                friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+            except FriendRequest.DoesNotExist:
+                return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            # Fetch the friend request sent to the current authenticated user
-            friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
-        except FriendRequest.DoesNotExist:
-            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Atomic transaction to ensure data integrity
+            with transaction.atomic():
+                friend_request.status = FriendRequest.ACCEPTED
+                friend_request.save()
 
-        # Atomic transaction to ensure data integrity
-        with transaction.atomic():
-            friend_request.status = FriendRequest.ACCEPTED
-            friend_request.save()
-
-        return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
+            return Response({"message": "Friend request accepted"}, status=status.HTTP_200_OK)
+        
+        return Response({"message": "Friend request already rejected"}, status=status.HTTP_200_OK)
+        
 
 
 class RejectFriendRequestView(APIView):
@@ -184,8 +195,201 @@ class RejectFriendRequestView(APIView):
             return Response({"error": "You can't send request now as you're in the cooldown period"}, status=status.HTTP_403_FORBIDDEN)
 
         with transaction.atomic():
-            friend_request.delete()
+            friend_request.status = FriendRequest.REJECTED
+            friend_request.save()
 
         return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
 
+class BlockUserView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def post(self, request, *args, **kwargs):
+        blocker = request.user
+        blocked_id = request.data.get('blocked_id')
+
+        try:
+            blocked_user = User.objects.get(id=blocked_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if blocker.is_blocked(blocked_user):
+            return Response({"error": "User is already blocked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Block the user
+        blocker.blocked_users.add(blocked_user)
+
+        # Optionally, handle existing friend requests
+        FriendRequest.objects.filter(sender=blocker, receiver=blocked_user).update(status=FriendRequest.BLOCKED)
+        FriendRequest.objects.filter(sender=blocked_user, receiver=blocker).update(status=FriendRequest.BLOCKED)
+
+        return Response({"message": "User blocked"}, status=status.HTTP_200_OK)
+
+
+
+class UnblockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        blocker = request.user
+        blocked_id = request.data.get('blocked_id')
+
+        try:
+            blocked_user = User.objects.get(id=blocked_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not blocker.is_blocked(blocked_user):
+            return Response({"error": "User is not blocked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Unblock the user
+        blocker.blocked_users.remove(blocked_user)
+        return Response({"message": "User unblocked"}, status=status.HTTP_200_OK)
+
+
+class ProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        try:
+            # Fetch the profile of the requested user
+            user = User.objects.get(id=user_id)
+            
+            # Check if the requesting user has blocked the target user or vice versa
+            if user in request.user.blocked_users.all() or request.user in user.blocked_users.all():
+                return Response({"error": "You cannot view this profile as one of you has blocked the other."}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Serialize and return the user profile data
+            serializer = UserSerializer(user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class FriendListPagination(PageNumberPagination):
+    page_size = 10
+
+class FriendListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = FriendListPagination
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        print('user=',user)
+        # Check if result is cached
+        cache_key = f"friends_list_{user.id}"
+        friends_list = cache.get(cache_key)
+
+        if not friends_list:
+            # Query for accepted friend requests
+            accepted_friend_requests = FriendRequest.objects.filter(
+                Q(sender=user) | Q(receiver=user),
+                status=FriendRequest.ACCEPTED
+            ).select_related('sender', 'receiver')
+
+            # Build the list of friends
+            friends = []
+            for request in accepted_friend_requests:
+                if request.sender == user:
+                    friends.append(request.receiver)
+                else:
+                    friends.append(request.sender)
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, friends, timeout=60 * 10)
+
+        return friends_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response
+
+
+from .pagination import PendingFriendRequestPagination
+
+
+class SentPendingFriendRequestsPagination(PageNumberPagination):
+    page_size = 10
+
+class SentPendingFriendRequestsView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = SentPendingFriendRequestsPagination
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        print('Logged-in user=', user)
+        
+        # Check if the result is cached
+        cache_key = f"sent_pending_requests_{user.id}"
+        pending_requests_list = cache.get(cache_key)
+
+        if not pending_requests_list:
+            # Query for sent friend requests with 'pending' status
+            pending_friend_requests = FriendRequest.objects.filter(
+                sender=user,
+                status=FriendRequest.PENDING  # Assuming 'PENDING' is the value in your model
+            ).select_related('receiver')
+            # Build the list of pending request receivers
+            pending_requests = [request.receiver for request in pending_friend_requests]
+            print(f'pending_friend_requests{pending_friend_requests}')
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, pending_requests, timeout=60 * 10)
+            return pending_requests
+
+        # Return the list or empty if not cached
+        return pending_requests_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response
+
+
+class ReceivedPendingFriendRequestsPagination(PageNumberPagination):
+    page_size = 10
+
+class ReceivedPendingFriendRequestsView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = ReceivedPendingFriendRequestsPagination
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        print('Logged-in user=', user)
+        
+        # Check if the result is cached
+        cache_key = f"received_pending_requests_{user.id}"
+        pending_requests_list = cache.get(cache_key)
+
+        if not pending_requests_list:
+            # Query for received friend requests with 'pending' status
+            pending_friend_requests = FriendRequest.objects.filter(
+                receiver=user,
+                status=FriendRequest.PENDING  # Assuming 'PENDING' is the value in your model
+            ).select_related('sender')
+            
+            # Build the list of pending request senders
+            pending_requests = [request.sender for request in pending_friend_requests]
+            print(f'pending_friend_requests{pending_friend_requests}')
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, pending_requests, timeout=60 * 10)
+            return pending_requests
+
+        # Return the list or empty if not cached
+        return pending_requests_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response

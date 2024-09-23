@@ -276,7 +276,7 @@ class FriendListView(ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-
+        print('user=',user)
         # Check if result is cached
         cache_key = f"friends_list_{user.id}"
         friends_list = cache.get(cache_key)
@@ -311,13 +311,85 @@ class FriendListView(ListAPIView):
 
 from .pagination import PendingFriendRequestPagination
 
-class PendingFriendRequestsView(ListAPIView):
+
+class SentPendingFriendRequestsPagination(PageNumberPagination):
+    page_size = 10
+
+class SentPendingFriendRequestsView(ListAPIView):
     permission_classes = [IsAuthenticated]
-    pagination_class = PendingFriendRequestPagination
-    serializer_class = PendingFriendRequestSerializer
+    pagination_class = SentPendingFriendRequestsPagination
+    serializer_class = UserSerializer
 
     def get_queryset(self):
         user = self.request.user
-        print(user)
-        return FriendRequest.objects.filter(receiver=user, status=FriendRequest.PENDING).order_by('-created_at')
+        print('Logged-in user=', user)
+        
+        # Check if the result is cached
+        cache_key = f"sent_pending_requests_{user.id}"
+        pending_requests_list = cache.get(cache_key)
 
+        if not pending_requests_list:
+            # Query for sent friend requests with 'pending' status
+            pending_friend_requests = FriendRequest.objects.filter(
+                sender=user,
+                status=FriendRequest.PENDING  # Assuming 'PENDING' is the value in your model
+            ).select_related('receiver')
+            # Build the list of pending request receivers
+            pending_requests = [request.receiver for request in pending_friend_requests]
+            print(f'pending_friend_requests{pending_friend_requests}')
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, pending_requests, timeout=60 * 10)
+            return pending_requests
+
+        # Return the list or empty if not cached
+        return pending_requests_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response
+
+
+class ReceivedPendingFriendRequestsPagination(PageNumberPagination):
+    page_size = 10
+
+class ReceivedPendingFriendRequestsView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = ReceivedPendingFriendRequestsPagination
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        print('Logged-in user=', user)
+        
+        # Check if the result is cached
+        cache_key = f"received_pending_requests_{user.id}"
+        pending_requests_list = cache.get(cache_key)
+
+        if not pending_requests_list:
+            # Query for received friend requests with 'pending' status
+            pending_friend_requests = FriendRequest.objects.filter(
+                receiver=user,
+                status=FriendRequest.PENDING  # Assuming 'PENDING' is the value in your model
+            ).select_related('sender')
+            
+            # Build the list of pending request senders
+            pending_requests = [request.sender for request in pending_friend_requests]
+            print(f'pending_friend_requests{pending_friend_requests}')
+
+            # Cache the result for 10 minutes
+            cache.set(cache_key, pending_requests, timeout=60 * 10)
+            return pending_requests
+
+        # Return the list or empty if not cached
+        return pending_requests_list or []
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list method to cache paginated response as well.
+        """
+        response = super().list(request, *args, **kwargs)
+        return response

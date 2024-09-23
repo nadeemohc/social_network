@@ -14,5 +14,7 @@ urlpatterns = [
     path('unblock/', UnblockUserView.as_view(), name='unblock_user'),
     path('profile/<int:user_id>/', ProfileView.as_view(), name='view_profile'),
     path('friends/', FriendListView.as_view(), name='friends-list'),
-    path('pending-friend-requests/', PendingFriendRequestsView.as_view(), name='pending-friend-requests'),
+    path('sent-pending-requests/', SentPendingFriendRequestsView.as_view(), name='sent-pending-requests'),
+    # path('pending-friend-requests/', PendingFriendRequestsView.as_view(), name='pending-friend-requests'),
+    path('received-pending-requests/', ReceivedPendingFriendRequestsView.as_view(), name='received-pending-requests'),
 ]

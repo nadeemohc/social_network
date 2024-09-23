@@ -97,7 +97,7 @@ To run the entire application, including PostgreSQL and Redis, with Docker, foll
 
     ```env
     DJANGO_SECRET_KEY='django project's secret key'
-    DATABASE_URL=postgres://user_x:password@db:5432/social_network
+    DATABASE_URL=postgres://db_user:db_password@db_host:db_port/db_name
     ```
 
 2. Build the Docker containers:

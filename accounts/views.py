@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password
 from .models import User, FriendRequest
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer, PendingFriendRequestSerializer
+from .serializers import MyTokenObtainPairSerializer, PendingFriendRequestSerializer, FriendRequestSerializer
 from rest_framework.permissions import IsAuthenticated
 from django.core.cache import cache
 from .permissions import IsRead, IsWrite, IsAdmin
@@ -177,28 +177,30 @@ class AcceptFriendRequestView(APIView):
         return Response({"message": "Friend request already rejected"}, status=status.HTTP_200_OK)
         
 
-
 class RejectFriendRequestView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         if not request.user or request.user.is_anonymous:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+        if friend_request.status != 'accepted':
+            try:
+                friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
+            except FriendRequest.DoesNotExist:
+                return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            friend_request = FriendRequest.objects.get(id=kwargs['request_id'], receiver=request.user)
-        except FriendRequest.DoesNotExist:
-            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Ensure cooldown period after rejecting
+            if friend_request.is_rejected_cooldown_active():
+                return Response({"error": "You can't send request now as you're in the cooldown period"}, status=status.HTTP_403_FORBIDDEN)
 
-        # Ensure cooldown period after rejecting
-        if friend_request.is_rejected_cooldown_active():
-            return Response({"error": "You can't send request now as you're in the cooldown period"}, status=status.HTTP_403_FORBIDDEN)
+            with transaction.atomic():
+                friend_request.status = FriendRequest.REJECTED
+                friend_request.save()
 
-        with transaction.atomic():
-            friend_request.status = FriendRequest.REJECTED
-            friend_request.save()
+            return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
+        return Response({"message": "Can't reject an already accepted friend request"}, status=status.HTTP_200_OK)
 
-        return Response({"message": "Friend request rejected"}, status=status.HTTP_200_OK)
 
 class BlockUserView(APIView):
     permission_classes = [IsAuthenticated]
@@ -229,6 +231,7 @@ class BlockUserView(APIView):
 class UnblockUserView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         blocker = request.user
         blocked_id = request.data.get('blocked_id')
@@ -265,6 +268,7 @@ class ProfileView(APIView):
         
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
 
 class FriendListPagination(PageNumberPagination):
     page_size = 10
@@ -359,7 +363,7 @@ class ReceivedPendingFriendRequestsPagination(PageNumberPagination):
 class ReceivedPendingFriendRequestsView(ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = ReceivedPendingFriendRequestsPagination
-    serializer_class = UserSerializer
+    serializer_class = FriendRequestSerializer
 
     def get_queryset(self):
         user = self.request.user
@@ -373,16 +377,12 @@ class ReceivedPendingFriendRequestsView(ListAPIView):
             # Query for received friend requests with 'pending' status
             pending_friend_requests = FriendRequest.objects.filter(
                 receiver=user,
-                status=FriendRequest.PENDING  # Assuming 'PENDING' is the value in your model
+                status=FriendRequest.PENDING
             ).select_related('sender')
-            
-            # Build the list of pending request senders
-            pending_requests = [request.sender for request in pending_friend_requests]
-            print(f'pending_friend_requests{pending_friend_requests}')
-
+            print(f'pending 2 {pending_friend_requests}')
             # Cache the result for 10 minutes
-            cache.set(cache_key, pending_requests, timeout=60 * 10)
-            return pending_requests
+            cache.set(cache_key, pending_friend_requests, timeout=60 * 10)
+            return pending_friend_requests
 
         # Return the list or empty if not cached
         return pending_requests_list or []
@@ -392,4 +392,5 @@ class ReceivedPendingFriendRequestsView(ListAPIView):
         Override list method to cache paginated response as well.
         """
         response = super().list(request, *args, **kwargs)
+        print(f'response = {response}')
         return response

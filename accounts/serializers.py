@@ -29,3 +29,11 @@ class PendingFriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = FriendRequest
         fields = ['id', 'created_at', 'sender']  # Add sender here
+
+
+class FriendRequestSerializer(serializers.ModelSerializer):
+    sender = UserSerializer()  
+
+    class Meta:
+        model = FriendRequest
+        fields = ['id', 'sender', 'status']

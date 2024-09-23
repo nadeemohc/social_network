@@ -9,6 +9,7 @@ Welcome to the **Social Network API** project! This repository contains the back
 - [Installation](#installation)
 - [Usage](#usage)
 - [API Documentation](#api-documentation)
+- [Docker Setup](#docker-setup)
 - [Design Choices](#design-choices)
 
 ## Project Description
@@ -37,6 +38,7 @@ This API is optimized for performance and scalability, with rate limiting, cachi
 - Python 3.x
 - PostgreSQL installed and running
 - Redis installed and running
+- Docker and Docker Compose
 - Virtual environment (optional but recommended)
 
 ### Setup
@@ -48,7 +50,7 @@ This API is optimized for performance and scalability, with rate limiting, cachi
     cd social-network-api
     ```
 
-2. Create and activate a virtual environment:
+2. If not using Docker, create and activate a virtual environment:
 
     ```sh
     python -m venv venv
@@ -80,6 +82,66 @@ This API is optimized for performance and scalability, with rate limiting, cachi
     ```sh
     python manage.py runserver
     ```
+
+## Docker Setup
+
+### Prerequisites
+
+Make sure you have Docker and Docker Compose installed on your machine.
+
+### Running with Docker
+
+To run the entire application, including PostgreSQL and Redis, with Docker, follow these steps:
+
+1. Ensure that your `.env` file is correctly configured. Here's an example:
+
+    ```env
+    DJANGO_SECRET_KEY='django project's secret key'
+    DATABASE_URL=postgres://user_x:password@db:5432/social_network
+    ```
+
+2. Build the Docker containers:
+
+    ```sh
+    docker-compose build
+    ```
+
+3. Run the Docker containers:
+
+    ```sh
+    docker-compose up
+    ```
+
+    This will:
+    - Build the Django app (`web` service) based on the `Dockerfile`.
+    - Set up a PostgreSQL database (`db` service) on port `5433`.
+    - Set up Redis (`redis` service) on port `6380`.
+
+4. Once the containers are up, the application will be available at `http://localhost:8000`.
+
+5. To apply database migrations, run:
+
+    ```sh
+    docker-compose exec web python manage.py migrate
+    ```
+
+6. To create a superuser for accessing the admin panel, run:
+
+    ```sh
+    docker-compose exec web python manage.py createsuperuser
+    ```
+
+7. To stop the application, press `Ctrl+C` or run:
+
+    ```sh
+    docker-compose down
+    ```
+
+### Key Docker Services
+
+- **web**: The Django web application, served on port `8000`.
+- **db**: The PostgreSQL database, accessible via port `5433`.
+- **redis**: Redis cache, served on port `6380`.
 
 ## Usage
 

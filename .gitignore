@@ -3,4 +3,4 @@ venv/
 *.sqlite3
 .vscode/
 .idea/
-# .env
+.env

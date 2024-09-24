@@ -145,10 +145,10 @@ To run the entire application, including PostgreSQL and Redis, with Docker, foll
 
 ## Usage
 
-### Postman Collection
+<!-- ### Postman Collection
 
 A Postman collection is provided to facilitate testing of API endpoints. You can find the collection in the repository at:
-[Postman Collection](./postman-collection.json).
+[Postman Collection](./postman-collection.json). -->
 
 To use it:
 

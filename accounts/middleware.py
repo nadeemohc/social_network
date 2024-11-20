@@ -24,7 +24,7 @@ class RateLimitMiddleware:
         else:
             count = cache.incr(cache_key)
 
-        if count > 10:
+        if count > 3:
             return JsonResponse({"error": "Rate limit exceeded"}, status=429)
 
         response = self.get_response(request)
@@ -41,6 +41,6 @@ def can_send_friend_request(sender):
     count = cache.incr(cache_key)
     
     # If the count exceeds 3, deny the request
-    if count > 10:
+    if count > 3:
         return False
     return True
